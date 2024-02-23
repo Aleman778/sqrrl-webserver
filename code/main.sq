@@ -1,0 +1,193 @@
+
+#include <basic.sq>
+
+#define WSADESCRIPTION_LEN      257
+#define WSASYS_STATUS_LEN       129
+#define AF_INET         2               // internetwork: UDP, TCP, etc.
+
+//
+// Socket types.
+//
+
+#define SOCK_STREAM     1
+#define SOCK_DGRAM      2
+#define SOCK_RAW        3
+#define SOCK_RDM        4
+#define SOCK_SEQPACKET  5
+
+#define IPPROTO_TCP 6
+
+#define AI_PASSIVE 0x00000001
+
+struct WSAData {
+    u16 wVersion;
+    u16 wHighVersion;
+    [WSADESCRIPTION_LEN]u8 szDescription;
+    [WSASYS_STATUS_LEN]u8 szSystemStatus;
+    [WSADESCRIPTION_LEN]u8 szDescription;
+    [WSASYS_STATUS_LEN]u8 szSystemStatus;
+    u16 iMaxSockets;
+    u16 iMaxUdpDg;
+    u8* lpVendorInfo;
+}
+
+struct addrinfo {
+    int                 ai_flags;       // AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST
+    int                 ai_family;      // PF_xxx
+    int                 ai_socktype;    // SOCK_xxx
+    int                 ai_protocol;    // 0 or IPPROTO_xxx for IPv4 and IPv6
+    umm                 ai_addrlen;     // Length of ai_addr
+    u8*                 ai_canonname;   // Canonical name for nodename
+    void*               ai_addr;        // TODO: probably need sockaddr definition here
+    addrinfo*           ai_next;        // Next structure in linked list
+}
+typedef addrinfo* PADDRINFOA;
+
+typedef umm SOCKET;
+#define INVALID_SOCKET (SOCKET)(~0)
+#define SOCKET_ERROR (-1)
+
+#define SOMAXCONN       0x7fffffff
+
+/*
+ * WinSock 2 extension -- manifest constants for shutdown()
+ */
+#define SD_RECEIVE      0x00
+#define SD_SEND         0x01
+#define SD_BOTH         0x02
+
+@link("Ws2_32.dll")
+extern {
+    int WSAStartup(u16 wVersionRequested, WSAData* lpWSAData);
+    int WSACleanup();
+    int WSAGetLastError();
+    
+    int getaddrinfo(cstring pNodeName,
+                    cstring pServiceName,
+                    const PADDRINFOA pHints,
+                    PADDRINFOA* ppResult);
+    SOCKET socket(int af, int type, int protocol);
+    int closesocket(SOCKET s);
+    
+    int bind(SOCKET s,
+             void* name, // sockaddr
+             int namelen);
+    
+    int listen(SOCKET s,
+               int backlog);
+    
+    SOCKET accept(SOCKET s,
+                  void* addr, // sockaddr
+                  int* addrlen);
+    
+    int recv(SOCKET s, u8* buf, int len, int flags);
+    
+    int send(SOCKET s,
+             u8* buf,
+             int len,
+             int flags);
+    
+    int shutdown(SOCKET s, int how);
+}
+
+#define DEFAULT_BUFLEN 512
+#define DEFAULT_HOSTNAME 0
+#define DEFAULT_PORT "8000"
+
+#define http_mock_response \
+"HTTP/1.1 200 OK\n" \
+"Date: Sat, 09 Oct 2010 14:28:02 GMT\n" \
+"Server: Sqrrl\n" \
+"Last-Modified: Tue, 01 Dec 2009 20:18:22 GMT\n" \
+"Accept-Ranges: bytes\n" \
+"Content-Length: 27\n" \
+"Content-Type: text/html\n\n" \
+"<h1>Hello world Sqrrl!</h1>"
+
+
+//"ETag: \"51142bc1-7449-479b075b2891b\"\n" \
+
+int
+main() {
+    WSAData wsadata;
+    int err = WSAStartup(0x0202, &wsadata);
+    if (err) {
+        pln("WSAStartup failed with code %", err);
+        return 1;
+    }
+    
+    addrinfo hints;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
+    
+    addrinfo* result;
+    err = getaddrinfo(DEFAULT_HOSTNAME, DEFAULT_PORT, &hints, &result);
+    if (err) {
+        pln("getaddrinfo failed with code %", err);
+        return 1;
+    }
+    
+    pln("result = %", *result);
+    
+    SOCKET listen_socket = socket(result.ai_family, result.ai_socktype, result.ai_protocol);
+    if (listen_socket == SOCKET_ERROR) {
+        pln("socket failed with code %", WSAGetLastError());
+        return 1
+    }
+    
+    pln("server = %", listen_socket);
+    
+    err = bind(listen_socket, result.ai_addr, (int) result.ai_addrlen);
+    if (err == SOCKET_ERROR) {
+        pln("bind failed with code %", WSAGetLastError());
+        return 1;
+    }
+    
+    err = listen(listen_socket, SOMAXCONN);
+    if (err == SOCKET_ERROR) {
+        pln("listen failed with code %", WSAGetLastError());
+        return 1;
+    }
+    
+    pln("after Listen");
+    
+    SOCKET client_socket = accept(listen_socket, 0, 0);
+    if (client_socket == INVALID_SOCKET) {
+        pln("accept client socket failed with code %", WSAGetLastError());
+        return 1;
+    }
+    
+    
+    //auto x = std::make_unique(532423);
+    
+    int x = 532423;
+    
+    
+    // found client, not listening anymore
+    closesocket(listen_socket);
+    
+    [DEFAULT_BUFLEN]u8 buffer;
+    
+    //for (;;) {
+    err = recv(client_socket, buffer.data, sizeof(buffer), 0);
+    cstring s = (cstring) buffer.data;
+    pln("buffer = %", s);
+    
+    string hello = http_mock_response;
+    err = send(client_socket, hello.data, (int) hello.count, 0);
+    
+    //break;
+    
+    //if (err) {
+    //break;
+    //}
+    //}
+    
+    err = shutdown(client_socket, SD_SEND);
+    
+    pln("client = %", client_socket);
+    
+    return 0;
+}
